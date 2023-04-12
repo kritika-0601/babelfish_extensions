@@ -65,6 +65,8 @@ PG_FUNCTION_INFO_V1(sp_droplinkedsrvlogin_internal);
 PG_FUNCTION_INFO_V1(sp_dropserver_internal);
 PG_FUNCTION_INFO_V1(sp_babelfish_volatility);
 PG_FUNCTION_INFO_V1(sp_rename_internal);
+PG_FUNCTION_INFO_V1(sp_babelfish_createExtension);
+PG_FUNCTION_INFO_V1(sp_babelfish_dropextension);
 
 extern void delete_cached_batch(int handle);
 extern InlineCodeBlockArgs *create_args(int numargs);
@@ -77,6 +79,8 @@ static List *gen_sp_addrolemember_subcmds(const char *user, const char *member);
 static List *gen_sp_droprolemember_subcmds(const char *user, const char *member);
 static List *gen_sp_rename_subcmds(const char *objname, const char *newname, const char *schemaname, ObjectType objtype);
 static void exec_utility_cmd_helper(char *query_str);
+//static List *gen_sp_babelfish_createExtension_subcmds(void);
+static List *gen_sp_babelfish_dropextension_subcmds(void);
 
 List	   *handle_bool_expr_rec(BoolExpr *expr, List *list);
 List	   *handle_where_clause_attnums(ParseState *pstate, Node *w_clause, List *target_attnums);
@@ -1577,6 +1581,131 @@ create_xp_instance_regread_in_master_dbo_internal(PG_FUNCTION_ARGS)
 	PG_END_TRY();
 
 	PG_RETURN_INT32(0);
+}
+
+Datum
+sp_babelfish_createExtension(PG_FUNCTION_ARGS)
+{
+	List	   *parsetree_list;
+	ListCell   *parsetree_item;
+	char	   *extensionStmt;
+	Node	   *stmt;
+
+	SetCurrentRoleId(GetSessionUserId(), false);
+
+	extensionStmt = PG_ARGISNULL(0) ? NULL : TextDatumGetCString(PG_GETARG_TEXT_PP(0));
+	parsetree_list = raw_parser(extensionStmt, RAW_PARSE_DEFAULT);
+	stmt = parsetree_nth_stmt(parsetree_list, 0);
+	rewrite_object_refs(stmt);
+
+	if (extensionStmt == NULL)
+			ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+							errmsg("Name cannot be NULL.")));
+
+	if (list_length(parsetree_list) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Expected 1 statement but get %d statements after parsing", list_length(parsetree_list))));
+
+
+	foreach(parsetree_item, parsetree_list)
+		{
+			Node	   *stmt = ((RawStmt *) lfirst(parsetree_item))->stmt;
+			Node	   *parsetree;
+			CreateExtensionStmt *crstmt;
+			
+			PlannedStmt *wrapper;
+			
+			
+
+			/* need to make a wrapper PlannedStmt */
+			wrapper = makeNode(PlannedStmt);
+			wrapper->commandType = CMD_UTILITY;
+			wrapper->canSetTag = false;
+			wrapper->utilityStmt = stmt;
+			wrapper->stmt_location = 0;
+			wrapper->stmt_len = 16;
+
+			parsetree = wrapper->utilityStmt;
+			crstmt = (CreateExtensionStmt *) parsetree;
+
+			
+			if(strcmp(crstmt->extname, "pg_stat_statements"))
+			{
+				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("'%s' is not a valid name", crstmt->extname)));
+
+			}
+			/* do this step */
+			ProcessUtility(wrapper,
+						   "(CREATE EXTENSION pg_stat_statements)",
+						   false,
+						   PROCESS_UTILITY_SUBCOMMAND,
+						   NULL,
+						   NULL,
+						   None_Receiver,
+						   NULL);
+
+			/* make sure later steps can see the object created here */
+			CommandCounterIncrement();
+		}
+		PG_RETURN_VOID();
+}
+
+Datum
+sp_babelfish_dropextension(PG_FUNCTION_ARGS)
+{
+	List	   *parsetree_list;
+	ListCell   *parsetree_item;
+
+	SetCurrentRoleId(GetSessionUserId(), false);
+	parsetree_list = gen_sp_babelfish_dropextension_subcmds();
+
+	foreach(parsetree_item, parsetree_list)
+		{
+			Node	   *stmt = ((RawStmt *) lfirst(parsetree_item))->stmt;
+			PlannedStmt *wrapper;
+
+			/* need to make a wrapper PlannedStmt */
+			wrapper = makeNode(PlannedStmt);
+			wrapper->commandType = CMD_UTILITY;
+			wrapper->canSetTag = false;
+			wrapper->utilityStmt = stmt;
+			wrapper->stmt_location = 0;
+			wrapper->stmt_len = 16;
+
+			/* do this step */
+			ProcessUtility(wrapper,
+						   "(DROP EXTENSION pg_stat_statements; )",
+						   false,
+						   PROCESS_UTILITY_SUBCOMMAND,
+						   NULL,
+						   NULL,
+						   None_Receiver,
+						   NULL);
+
+			/* make sure later steps can see the object created here */
+			CommandCounterIncrement();
+		}
+		PG_RETURN_VOID();
+}
+
+static List *
+gen_sp_babelfish_dropextension_subcmds(void)
+{
+	StringInfoData query;
+	List	   *res;
+	Node	   *stmt;
+
+	initStringInfo(&query);
+	appendStringInfo(&query, "DROP EXTENSION pg_stat_statements; ");
+	res = raw_parser(query.data, RAW_PARSE_DEFAULT);
+
+	stmt = parsetree_nth_stmt(res, 0);
+	
+	rewrite_object_refs(stmt);
+
+	return res;
 }
 
 Datum

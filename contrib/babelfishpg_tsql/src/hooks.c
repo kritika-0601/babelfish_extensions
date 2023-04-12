@@ -127,7 +127,6 @@ static void insert_pltsql_function_defaults(HeapTuple func_tuple, List *defaults
 static int	print_pltsql_function_arguments(StringInfo buf, HeapTuple proctup, bool print_table_args, bool print_defaults);
 static void pltsql_GetNewObjectId(VariableCache variableCache);
 static void pltsql_validate_var_datatype_scale(const TypeName *typeName, Type typ);
-static void pltsql_transactionStmt(PlannedStmt *pstmt, ParamListInfo params, QueryCompletion *qc);
 
 /*****************************************
  * 			Executor Hooks
@@ -189,7 +188,6 @@ static validate_var_datatype_scale_hook_type prev_validate_var_datatype_scale_ho
 static modify_RangeTblFunction_tupdesc_hook_type prev_modify_RangeTblFunction_tupdesc_hook = NULL;
 static fill_missing_values_in_copyfrom_hook_type prev_fill_missing_values_in_copyfrom_hook = NULL;
 static check_rowcount_hook_type prev_check_rowcount_hook = NULL;
-static transactionStmt_hook_type prev_transactionStmt_hook = NULL;
 
 /*****************************************
  * 			Install / Uninstall
@@ -300,9 +298,6 @@ InstallExtendedHooks(void)
 	fill_missing_values_in_copyfrom_hook = fill_missing_values_in_copyfrom;
 	prev_check_rowcount_hook = check_rowcount_hook;
 	check_rowcount_hook = bbf_check_rowcount_hook;
-
-	prev_transactionStmt_hook = transactionStmt_hook;
-	transactionStmt_hook = pltsql_transactionStmt;
 }
 
 void
@@ -347,23 +342,11 @@ UninstallExtendedHooks(void)
 	modify_RangeTblFunction_tupdesc_hook = prev_modify_RangeTblFunction_tupdesc_hook;
 	fill_missing_values_in_copyfrom_hook = prev_fill_missing_values_in_copyfrom_hook;
 	check_rowcount_hook = prev_check_rowcount_hook;
-	transactionStmt_hook = prev_transactionStmt_hook;
 }
 
 /*****************************************
  * 			Hook Functions
  *****************************************/
-static void
-pltsql_transactionStmt(PlannedStmt *pstmt, ParamListInfo params, QueryCompletion *qc)
-{
-	Node	   *parsetree = pstmt->utilityStmt;
-	if (NestedTranCount > 0 || (sql_dialect == SQL_DIALECT_TSQL && !IsTransactionBlockActive()))
-	{
-		PLTsqlProcessTransaction(parsetree, params, qc);
-		return;
-	}
-}
-
 static void
 pltsql_GetNewObjectId(VariableCache variableCache)
 {
